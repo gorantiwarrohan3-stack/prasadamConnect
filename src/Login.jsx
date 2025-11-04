@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { auth, getOrCreateRecaptcha } from './firebase.js';
+import { auth, getOrCreateRecaptcha, clearRecaptcha } from './firebase.js';
 import { signInWithPhoneNumber } from 'firebase/auth';
 
 export default function Login() {
@@ -9,23 +9,50 @@ export default function Login() {
 	const [toast, setToast] = useState(null);
 	const confirmationRef = useRef(null);
 
-	// Auto-dismiss toast after 3 seconds
+	// Auto-dismiss toast after 3 seconds, refresh page if error (but not on OTP step)
 	useEffect(() => {
 		if (toast) {
 			const timer = setTimeout(() => {
+				const shouldRefresh = toast.type === 'error' && step === 'phone';
 				setToast(null);
+				// Refresh page after error toast disappears, but only on phone step
+				if (shouldRefresh) {
+					setTimeout(() => {
+						window.location.reload();
+					}, 100); // Small delay to ensure toast is cleared
+				}
 			}, 3000);
 			return () => clearTimeout(timer);
 		}
-	}, [toast]);
+	}, [toast, step]);
 
 	function showToast(message, type = 'error') {
 		setToast({ message, type });
 	}
 
+	// Initialize reCAPTCHA when component mounts and container is available
 	useEffect(() => {
-		getOrCreateRecaptcha('recaptcha-container');
+		// Wait for DOM to be ready
+		const timer = setTimeout(() => {
+			getOrCreateRecaptcha('recaptcha-container');
+		}, 100);
+
+		return () => {
+			clearTimeout(timer);
+			// Clean up on unmount
+			clearRecaptcha();
+		};
 	}, []);
+
+	// Re-initialize reCAPTCHA when returning to phone step
+	useEffect(() => {
+		if (step === 'phone') {
+			const timer = setTimeout(() => {
+				getOrCreateRecaptcha('recaptcha-container');
+			}, 100);
+			return () => clearTimeout(timer);
+		}
+	}, [step]);
 
 	async function requestOtp(e) {
 		e.preventDefault();
@@ -35,6 +62,10 @@ export default function Login() {
 				return;
 			}
 			const recaptcha = getOrCreateRecaptcha('recaptcha-container');
+			if (!recaptcha) {
+				showToast('reCAPTCHA initialization failed. Please refresh the page.', 'error');
+				return;
+			}
 			const confirmation = await signInWithPhoneNumber(auth, phone, recaptcha);
 			confirmationRef.current = confirmation;
 			setStep('otp');
@@ -49,6 +80,7 @@ export default function Login() {
 		try {
 			if (!confirmationRef.current) {
 				showToast('Please request a new OTP', 'error');
+				setOtp(''); // Clear input
 				return;
 			}
 			await confirmationRef.current.confirm(otp);
@@ -56,6 +88,7 @@ export default function Login() {
 			showToast('Authentication successful!', 'success');
 		} catch (err) {
 			showToast(err?.message || 'Invalid OTP', 'error');
+			setOtp(''); // Clear input on error
 		}
 	}
 
@@ -85,6 +118,8 @@ export default function Login() {
 				<div className="card">
 					<h1 className="title">Prasadam Connect</h1>
 					<p className="subtitle">Sign in with your phone number</p>
+				{/* Keep recaptcha-container always in DOM to prevent removal errors */}
+				<div id="recaptcha-container" style={{ display: 'none' }} />
 				{step === 'phone' ? (
 					<form onSubmit={requestOtp} className="stack">
 						<label className="label" htmlFor="phone">Phone (E.164, e.g. +12345678901)</label>
@@ -97,7 +132,6 @@ export default function Login() {
 							className="input"
 						/>
 						<button type="submit" className="btn">Send OTP</button>
-						<div id="recaptcha-container" />
 					</form>
 				) : (
 					<form onSubmit={verifyOtp} className="stack">

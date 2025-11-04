@@ -12,6 +12,11 @@
 - A Firebase project with Phone Authentication enabled
   - In Firebase Console: Build → Authentication → Sign-in method → enable Phone
   - For localhost, add your domain (http://localhost:5173) to Authorized domains
+  - **To send OTP to real phone numbers (not just test numbers):**
+    - Enable billing in your Firebase/Google Cloud project
+    - Go to Firebase Console → Project Settings → Usage and billing
+    - Link a billing account (required for SMS delivery)
+    - SMS costs apply per verification (varies by country)
 
 ### Setup
 1. Install deps:
@@ -37,3 +42,40 @@
 - Enter phone numbers in E.164 format, e.g. `+12345678901`.
 - reCAPTCHA is set to invisible; ensure you've configured your domain in Firebase Console.
 - For production hosting over HTTPS is required for service workers.
+
+### Sending OTP to Real Phone Numbers
+
+**For Development/Testing (Free):**
+- Use Firebase Console → Authentication → Sign-in method → Phone → "Phone numbers for testing"
+- Add test numbers (up to 10) with custom verification codes
+- No SMS is sent, no billing required
+
+**For Production (Real Phone Numbers):**
+1. **Enable Billing:**
+   - Go to [Firebase Console](https://console.firebase.google.com) → Your Project
+   - Click ⚙️ → Usage and billing
+   - Click "Modify plan" → Select "Blaze" (pay-as-you-go) plan
+   - Link a credit card/billing account
+
+2. **Enable Identity Toolkit API:**
+   - Go to [Google Cloud Console](https://console.cloud.google.com)
+   - Select your Firebase project
+   - Navigate to APIs & Services → Library
+   - Search for "Identity Toolkit API" and enable it
+
+3. **Configure API Key (if restricted):**
+   - Go to APIs & Services → Credentials
+   - If your API key is restricted, ensure "Identity Toolkit API" is allowed
+   - Or set to "Don't restrict key" for testing
+
+4. **Verify Domain Authorization:**
+   - Firebase Console → Authentication → Settings → Authorized domains
+   - Add your production domain (e.g., `yourdomain.com`)
+   - localhost is enabled by default for development
+
+**Costs:**
+- SMS verification costs vary by country (typically $0.01-$0.05 per SMS)
+- Firebase provides a free tier, but Phone Auth requires billing to be enabled
+- Set up billing alerts in Google Cloud Console to monitor costs
+
+Once billing is enabled, your app will automatically send real SMS OTPs to any phone number entered (in E.164 format).

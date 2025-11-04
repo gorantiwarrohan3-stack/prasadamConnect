@@ -17,13 +17,46 @@ export const auth = getAuth(app);
 
 // Helper to ensure reCAPTCHA exists once per session
 export function getOrCreateRecaptcha(containerId = 'recaptcha-container') {
-	if (!window._rfpwaRecaptchaVerifier) {
+	// Clean up existing verifier if it exists
+	if (window._rfpwaRecaptchaVerifier) {
+		try {
+			window._rfpwaRecaptchaVerifier.clear();
+		} catch (e) {
+			// Ignore errors if already cleared
+		}
+		window._rfpwaRecaptchaVerifier = null;
+	}
+
+	// Ensure container exists
+	const container = document.getElementById(containerId);
+	if (!container) {
+		console.warn(`reCAPTCHA container ${containerId} not found`);
+		return null;
+	}
+
+	// Create new verifier
+	try {
 		window._rfpwaRecaptchaVerifier = new RecaptchaVerifier(auth, containerId, {
 			size: 'invisible',
 			callback: () => {
 				// reCAPTCHA solved
 			},
 		});
+		return window._rfpwaRecaptchaVerifier;
+	} catch (error) {
+		console.error('Error creating reCAPTCHA verifier:', error);
+		return null;
 	}
-	return window._rfpwaRecaptchaVerifier;
+}
+
+// Cleanup function
+export function clearRecaptcha() {
+	if (window._rfpwaRecaptchaVerifier) {
+		try {
+			window._rfpwaRecaptchaVerifier.clear();
+		} catch (e) {
+			// Ignore errors
+		}
+		window._rfpwaRecaptchaVerifier = null;
+	}
 }
