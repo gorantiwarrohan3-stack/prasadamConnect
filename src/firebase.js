@@ -15,37 +15,72 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 
+// Mutex to prevent concurrent reCAPTCHA initialization
+let _isInitializing = false;
+
 // Helper to ensure reCAPTCHA exists once per session
 export function getOrCreateRecaptcha(containerId = 'recaptcha-container') {
-	// Clean up existing verifier if it exists
+	// If verifier already exists and is valid, return it immediately
+	// This avoids unnecessary cleanup/recreation cycles
 	if (window._rfpwaRecaptchaVerifier) {
 		try {
-			window._rfpwaRecaptchaVerifier.clear();
+			// Verify the verifier is still valid by checking if it has a render method
+			if (window._rfpwaRecaptchaVerifier.render) {
+				return window._rfpwaRecaptchaVerifier;
+			}
 		} catch (e) {
-			// Ignore errors if already cleared
+			// Verifier is invalid, clear it and continue with initialization
+			window._rfpwaRecaptchaVerifier = null;
 		}
-		window._rfpwaRecaptchaVerifier = null;
 	}
 
-	// Ensure container exists
-	const container = document.getElementById(containerId);
-	if (!container) {
-		console.warn(`reCAPTCHA container ${containerId} not found`);
-		return null;
+	// Guard: prevent concurrent initialization
+	// If initialization is in progress, return existing verifier or null
+	// This prevents race conditions from rapid successive calls
+	if (_isInitializing) {
+		// Return whatever exists (might be null if init hasn't completed)
+		return window._rfpwaRecaptchaVerifier || null;
 	}
 
-	// Create new verifier
+	// Set mutex flag to prevent concurrent initialization
+	_isInitializing = true;
+
 	try {
+		// Clean up existing verifier if it exists (only once at start of init)
+		// This cleanup is now protected by the mutex, so concurrent calls won't interfere
+		if (window._rfpwaRecaptchaVerifier) {
+			try {
+				window._rfpwaRecaptchaVerifier.clear();
+			} catch (e) {
+				// Ignore errors if already cleared
+			}
+			window._rfpwaRecaptchaVerifier = null;
+		}
+
+		// Ensure container exists
+		const container = document.getElementById(containerId);
+		if (!container) {
+			console.warn(`reCAPTCHA container ${containerId} not found`);
+			return null;
+		}
+
+		// Create new verifier (synchronous operation)
+		// This is now protected by the mutex, preventing concurrent creation
 		window._rfpwaRecaptchaVerifier = new RecaptchaVerifier(auth, containerId, {
 			size: 'invisible',
 			callback: () => {
 				// reCAPTCHA solved
 			},
 		});
+
 		return window._rfpwaRecaptchaVerifier;
 	} catch (error) {
 		console.error('Error creating reCAPTCHA verifier:', error);
+		window._rfpwaRecaptchaVerifier = null;
 		return null;
+	} finally {
+		// Always release mutex
+		_isInitializing = false;
 	}
 }
 
@@ -59,4 +94,6 @@ export function clearRecaptcha() {
 		}
 		window._rfpwaRecaptchaVerifier = null;
 	}
+	// Reset mutex flag to ensure clean state
+	_isInitializing = false;
 }

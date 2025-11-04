@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { auth, getOrCreateRecaptcha, clearRecaptcha } from './firebase.js';
 import { signInWithPhoneNumber } from 'firebase/auth';
 
@@ -9,48 +9,94 @@ export default function Login() {
 	const [toast, setToast] = useState(null);
 	const confirmationRef = useRef(null);
 
-	// Auto-dismiss toast after 3 seconds, refresh page if error (but not on OTP step)
+	// Auto-dismiss toast after 3 seconds
 	useEffect(() => {
 		if (toast) {
 			const timer = setTimeout(() => {
-				const shouldRefresh = toast.type === 'error' && step === 'phone';
 				setToast(null);
-				// Refresh page after error toast disappears, but only on phone step
-				if (shouldRefresh) {
-					setTimeout(() => {
-						window.location.reload();
-					}, 100); // Small delay to ensure toast is cleared
-				}
 			}, 3000);
 			return () => clearTimeout(timer);
 		}
-	}, [toast, step]);
+	}, [toast]);
 
 	function showToast(message, type = 'error') {
 		setToast({ message, type });
 	}
 
-	// Initialize reCAPTCHA when component mounts and container is available
-	useEffect(() => {
-		// Wait for DOM to be ready
-		const timer = setTimeout(() => {
-			getOrCreateRecaptcha('recaptcha-container');
-		}, 100);
+	// Helper to initialize reCAPTCHA when container is available
+	const initializeRecaptcha = (containerId) => {
+		const tryInitialize = () => {
+			const element = document.getElementById(containerId);
+			if (element) {
+				getOrCreateRecaptcha(containerId);
+				return true;
+			}
+			return false;
+		};
 
+		// Try immediately first
+		if (tryInitialize()) {
+			return undefined; // No cleanup needed
+		}
+
+		// Use MutationObserver to watch for DOM changes
+		let observer = null;
+		let retryCount = 0;
+		const maxRetries = 50; // Safety limit to prevent infinite observation
+
+		const checkAndInitialize = () => {
+			if (tryInitialize()) {
+				if (observer) {
+					observer.disconnect();
+					observer = null;
+				}
+				return true;
+			}
+			retryCount++;
+			if (retryCount >= maxRetries) {
+				console.warn(`reCAPTCHA container ${containerId} not found after ${maxRetries} mutation observations`);
+				if (observer) {
+					observer.disconnect();
+					observer = null;
+				}
+			}
+			return false;
+		};
+
+		// Use MutationObserver to watch for DOM mutations
+		observer = new MutationObserver(() => {
+			checkAndInitialize();
+		});
+
+		observer.observe(document.body, {
+			childList: true,
+			subtree: true,
+		});
+
+		// Return cleanup function
 		return () => {
-			clearTimeout(timer);
+			if (observer) {
+				observer.disconnect();
+				observer = null;
+			}
+		};
+	};
+
+	// Initialize reCAPTCHA when component mounts and container is available
+	useLayoutEffect(() => {
+		const cleanup = initializeRecaptcha('recaptcha-container');
+		return () => {
+			if (cleanup) cleanup();
 			// Clean up on unmount
 			clearRecaptcha();
 		};
 	}, []);
 
 	// Re-initialize reCAPTCHA when returning to phone step
-	useEffect(() => {
+	useLayoutEffect(() => {
 		if (step === 'phone') {
-			const timer = setTimeout(() => {
-				getOrCreateRecaptcha('recaptcha-container');
-			}, 100);
-			return () => clearTimeout(timer);
+			const cleanup = initializeRecaptcha('recaptcha-container');
+			return cleanup || undefined;
 		}
 	}, [step]);
 
