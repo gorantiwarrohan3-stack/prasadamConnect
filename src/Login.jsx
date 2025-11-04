@@ -1,0 +1,124 @@
+import React, { useEffect, useRef, useState } from 'react';
+import { auth, getOrCreateRecaptcha } from './firebase.js';
+import { signInWithPhoneNumber } from 'firebase/auth';
+
+export default function Login() {
+	const [step, setStep] = useState('phone'); // 'phone' | 'otp'
+	const [phone, setPhone] = useState('');
+	const [otp, setOtp] = useState('');
+	const [toast, setToast] = useState(null);
+	const confirmationRef = useRef(null);
+
+	// Auto-dismiss toast after 3 seconds
+	useEffect(() => {
+		if (toast) {
+			const timer = setTimeout(() => {
+				setToast(null);
+			}, 3000);
+			return () => clearTimeout(timer);
+		}
+	}, [toast]);
+
+	function showToast(message, type = 'error') {
+		setToast({ message, type });
+	}
+
+	useEffect(() => {
+		getOrCreateRecaptcha('recaptcha-container');
+	}, []);
+
+	async function requestOtp(e) {
+		e.preventDefault();
+		try {
+			if (!/^\+\d{10,15}$/.test(phone)) {
+				showToast('Enter phone in E.164 format, e.g. +12345678901', 'error');
+				return;
+			}
+			const recaptcha = getOrCreateRecaptcha('recaptcha-container');
+			const confirmation = await signInWithPhoneNumber(auth, phone, recaptcha);
+			confirmationRef.current = confirmation;
+			setStep('otp');
+			showToast('OTP sent successfully!', 'success');
+		} catch (err) {
+			showToast(err?.message || 'Failed to send OTP', 'error');
+		}
+	}
+
+	async function verifyOtp(e) {
+		e.preventDefault();
+		try {
+			if (!confirmationRef.current) {
+				showToast('Please request a new OTP', 'error');
+				return;
+			}
+			await confirmationRef.current.confirm(otp);
+			// Success: auth state updates and App will show Hello World
+			showToast('Authentication successful!', 'success');
+		} catch (err) {
+			showToast(err?.message || 'Invalid OTP', 'error');
+		}
+	}
+
+	return (
+		<>
+			{toast && (
+				<div className="toast-container">
+					<div className={`toast toast-${toast.type}`}>
+						<div className="toast-icon">
+							{toast.type === 'success' ? (
+								<svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+									<path d="M16.7071 5.29289C17.0976 5.68342 17.0976 6.31658 16.7071 6.70711L8.70711 14.7071C8.31658 15.0976 7.68342 15.0976 7.29289 14.7071L3.29289 10.7071C2.90237 10.3166 2.90237 9.68342 3.29289 9.29289C3.68342 8.90237 4.31658 8.90237 4.70711 9.29289L8 12.5858L15.2929 5.29289C15.6834 4.90237 16.3166 4.90237 16.7071 5.29289Z" fill="currentColor"/>
+								</svg>
+							) : (
+								<svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+									<path d="M10 18C14.4183 18 18 14.4183 18 10C18 5.58172 14.4183 2 10 2C5.58172 2 2 5.58172 2 10C2 14.4183 5.58172 18 10 18Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+									<path d="M10 6V10" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+									<path d="M10 14H10.01" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+								</svg>
+							)}
+						</div>
+						<div className="toast-message">{toast.message}</div>
+					</div>
+				</div>
+			)}
+			<div className="app-shell">
+				<div className="card">
+					<h1 className="title">Prasadam Connect</h1>
+					<p className="subtitle">Sign in with your phone number</p>
+				{step === 'phone' ? (
+					<form onSubmit={requestOtp} className="stack">
+						<label className="label" htmlFor="phone">Phone (E.164, e.g. +12345678901)</label>
+						<input
+							id="phone"
+							type="tel"
+							placeholder="+12345678901"
+							value={phone}
+							onChange={(e) => setPhone(e.target.value)}
+							className="input"
+						/>
+						<button type="submit" className="btn">Send OTP</button>
+						<div id="recaptcha-container" />
+					</form>
+				) : (
+					<form onSubmit={verifyOtp} className="stack">
+						<label className="label" htmlFor="otp">Enter OTP</label>
+						<input
+							id="otp"
+							type="text"
+							inputMode="numeric"
+							placeholder="6-digit code"
+							value={otp}
+							onChange={(e) => setOtp(e.target.value)}
+							className="input"
+						/>
+						<button type="submit" className="btn">Verify</button>
+						<button type="button" onClick={() => setStep('phone')} className="btn btn-secondary">Back</button>
+					</form>
+				)}
+			</div>
+		</div>
+		</>
+	);
+}
+
+
