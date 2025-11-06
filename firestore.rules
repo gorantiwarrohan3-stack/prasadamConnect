@@ -1,0 +1,21 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Users collection
+    match /users/{userId} {
+      // Users can read and write their own data
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+    
+    // Login history collection
+    match /loginHistory/{loginId} {
+      // Users can only read their own login history
+      allow read: if request.auth != null && 
+                     resource.data.uid == request.auth.uid;
+      // Only backend (Flask API with Admin SDK) can write login history
+      // Client-side writes are blocked; Admin SDK bypasses these rules
+      allow write: if false;
+    }
+  }
+}
+

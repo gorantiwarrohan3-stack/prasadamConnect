@@ -1,6 +1,7 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { auth, getOrCreateRecaptcha, clearRecaptcha } from './firebase.js';
 import { signInWithPhoneNumber } from 'firebase/auth';
+import { checkUserExists, registerUser, recordLogin } from './api.js';
 
 // Common countries with their phone codes
 const COUNTRIES = [
@@ -27,12 +28,18 @@ const COUNTRIES = [
 ];
 
 export default function Login() {
-	const [step, setStep] = useState('phone'); // 'phone' | 'otp'
-	const [countryCode, setCountryCode] = useState('US'); // Default to US
-	const [phoneNumber, setPhoneNumber] = useState(''); // Phone number without prefix
+	const [mode, setMode] = useState('login'); // 'login' | 'register'
+	const [step, setStep] = useState('phone'); // 'phone' | 'otp' | 'complete-registration'
+	const [countryCode, setCountryCode] = useState('US');
+	const [phoneNumber, setPhoneNumber] = useState('');
 	const [otp, setOtp] = useState('');
 	const [toast, setToast] = useState(null);
 	const confirmationRef = useRef(null);
+	
+	// Registration form state
+	const [name, setName] = useState('');
+	const [email, setEmail] = useState('');
+	const [address, setAddress] = useState('');
 
 	// Auto-dismiss toast after 3 seconds
 	useEffect(() => {
@@ -128,6 +135,37 @@ export default function Login() {
 	async function requestOtp(e) {
 		e.preventDefault();
 		try {
+			// If user is already authenticated and in complete-registration step, skip OTP
+			if (step === 'complete-registration' && auth.currentUser) {
+				// User is already authenticated, complete registration directly
+				const selectedCountry = COUNTRIES.find(c => c.code === countryCode);
+				const normalizedDialCode = selectedCountry.dialCode.replace(/\D/g, '');
+				let phoneDigits = phoneNumber.replace(/\D/g, '');
+				if (phoneDigits.startsWith(normalizedDialCode)) {
+					phoneDigits = phoneDigits.substring(normalizedDialCode.length);
+				}
+				phoneDigits = phoneDigits.replace(/^0+/, '');
+				const fullPhone = '+' + normalizedDialCode + phoneDigits;
+				await handleRegisterComplete(auth.currentUser.uid, fullPhone);
+				return;
+			}
+
+			// Validate registration fields if in register mode
+			if (mode === 'register') {
+				if (!name.trim()) {
+					showToast('Please enter your name', 'error');
+					return;
+				}
+				if (!email.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+					showToast('Please enter a valid email address', 'error');
+					return;
+				}
+				if (!address.trim()) {
+					showToast('Please enter your address', 'error');
+					return;
+				}
+			}
+
 			// Get selected country
 			const selectedCountry = COUNTRIES.find(c => c.code === countryCode);
 			if (!selectedCountry) {
@@ -135,20 +173,64 @@ export default function Login() {
 				return;
 			}
 
-			// Validate phone number (digits only, reasonable length)
-			const phoneDigits = phoneNumber.replace(/\D/g, '');
-			if (!phoneDigits || phoneDigits.length < 7 || phoneDigits.length > 15) {
+			// Normalize dial code: remove '+' and any non-digits
+			const normalizedDialCode = selectedCountry.dialCode.replace(/\D/g, '');
+
+			// Sanitize phone input: remove all non-digits
+			let phoneDigits = phoneNumber.replace(/\D/g, '');
+
+			// Remove leading country code if user already entered it
+			if (phoneDigits.startsWith(normalizedDialCode)) {
+				phoneDigits = phoneDigits.substring(normalizedDialCode.length);
+			}
+
+			// Trim leading zeros if present (common in some countries)
+			phoneDigits = phoneDigits.replace(/^0+/, '');
+
+			// Validate phone number length after normalization
+			if (!phoneDigits || phoneDigits.length < 4 || phoneDigits.length > 15) {
 				showToast('Please enter a valid phone number', 'error');
 				return;
 			}
 
-			// Combine country code with phone number
-			const fullPhone = selectedCountry.dialCode + phoneDigits;
+			// Build full phone number with country code (prepend '+' and normalized dial code)
+			const fullPhone = '+' + normalizedDialCode + phoneDigits;
 
 			// Validate E.164 format
 			if (!/^\+\d{10,15}$/.test(fullPhone)) {
 				showToast('Invalid phone number format', 'error');
 				return;
+			}
+
+			// Check if user exists before sending OTP
+			if (mode === 'register') {
+				// For register mode: check if user already exists
+				try {
+					const checkResult = await checkUserExists(fullPhone);
+					if (checkResult.exists) {
+						showToast('User already exists. Please login instead.', 'error');
+						setMode('login');
+						return;
+					}
+				} catch (apiError) {
+					// If API call fails, continue (API might be down)
+					console.warn('Could not check user existence before OTP:', apiError);
+				}
+			} else if (mode === 'login') {
+				// For login mode: check if user exists, if not ask them to register
+				try {
+					const checkResult = await checkUserExists(fullPhone);
+					if (!checkResult.exists) {
+						showToast('User not found. Please register first.', 'error');
+						setMode('register');
+						// Clear OTP step and show registration form
+						setStep('phone');
+						return;
+					}
+				} catch (apiError) {
+					// If API call fails, continue (API might be down)
+					console.warn('Could not check user existence before OTP:', apiError);
+				}
 			}
 
 			const recaptcha = getOrCreateRecaptcha('recaptcha-container');
@@ -174,11 +256,110 @@ export default function Login() {
 				return;
 			}
 			await confirmationRef.current.confirm(otp);
-			// Success: auth state updates and App will show Hello World
-			showToast('Authentication successful!', 'success');
+			
+			// Get the authenticated user
+			const user = auth.currentUser;
+			if (!user) {
+				showToast('Authentication failed', 'error');
+				return;
+			}
+
+			const selectedCountry = COUNTRIES.find(c => c.code === countryCode);
+			const normalizedDialCode = selectedCountry.dialCode.replace(/\D/g, '');
+			let phoneDigits = phoneNumber.replace(/\D/g, '');
+			if (phoneDigits.startsWith(normalizedDialCode)) {
+				phoneDigits = phoneDigits.substring(normalizedDialCode.length);
+			}
+			phoneDigits = phoneDigits.replace(/^0+/, '');
+			const fullPhone = '+' + normalizedDialCode + phoneDigits;
+
+			if (mode === 'register') {
+				// Check if user already exists via API
+				try {
+					const checkResult = await checkUserExists(fullPhone);
+					if (checkResult.exists) {
+						showToast('User already exists. Please login instead.', 'error');
+						return;
+					}
+				} catch (apiError) {
+					// If API call fails, still allow registration (API might be down)
+					console.warn('Could not check user existence:', apiError);
+				}
+				
+				// Registration form is already filled, now complete registration
+				await handleRegisterComplete(user.uid, fullPhone);
+			} else {
+				// Login: check if user exists via API
+				try {
+					const checkResult = await checkUserExists(fullPhone);
+					if (!checkResult.exists) {
+						// User doesn't exist - they're already authenticated, just need to complete registration
+						showToast('User not found. Please complete your registration.', 'error');
+						setMode('register');
+						setStep('complete-registration');
+						// Keep the phone number filled, but clear OTP
+						setOtp('');
+						// User is already authenticated, so show registration form directly
+						return;
+					}
+					// User exists - record login history
+					await recordLogin(user.uid, fullPhone);
+					showToast('Authentication successful!', 'success');
+				} catch (apiError) {
+					// If API call fails, assume user exists and proceed with login
+					console.warn('Could not check user existence:', apiError);
+					try {
+						await recordLogin(user.uid, fullPhone);
+						showToast('Authentication successful!', 'success');
+					} catch (loginError) {
+						showToast('Login recorded, but could not verify user status.', 'error');
+					}
+				}
+			}
 		} catch (err) {
 			showToast(err?.message || 'Invalid OTP', 'error');
 			setOtp(''); // Clear input on error
+		}
+	}
+
+	async function handleRegisterComplete(uid, fullPhone) {
+		try {
+			// Check if user already exists before registering
+			try {
+				const checkResult = await checkUserExists(fullPhone);
+				if (checkResult.exists) {
+					showToast('User already registered. Please login instead.', 'error');
+					setMode('login');
+					setStep('phone');
+					return;
+				}
+			} catch (apiError) {
+				// If API call fails, continue with registration (API might be down)
+				console.warn('Could not check user existence before registration:', apiError);
+			}
+
+			// Register user via API
+			await registerUser({
+				uid: uid,
+				name: name.trim(),
+				email: email.trim(),
+				phoneNumber: fullPhone,
+				address: address.trim(),
+			});
+
+			// Record login history via API
+			await recordLogin(uid, fullPhone);
+
+			showToast('Registration successful!', 'success');
+		} catch (err) {
+			// Handle specific error cases
+			if (err.message && err.message.includes('already')) {
+				showToast('User already registered. Please login instead.', 'error');
+				setMode('login');
+				setStep('phone');
+			} else {
+				showToast(err?.message || 'Registration failed', 'error');
+			}
 		}
 	}
 
@@ -207,58 +388,185 @@ export default function Login() {
 			<div className="app-shell">
 				<div className="card">
 					<h1 className="title">Prasadam Connect</h1>
-					<p className="subtitle">Sign in with your phone number</p>
-				{/* Keep recaptcha-container always in DOM to prevent removal errors */}
-				<div id="recaptcha-container" style={{ display: 'none' }} />
-				{step === 'phone' ? (
-					<form onSubmit={requestOtp} className="stack">
-						<label className="label" htmlFor="phone">Phone Number</label>
-						<div style={{ display: 'flex', gap: '8px' }}>
-							<select
-								id="country-code"
-								value={countryCode}
-								onChange={(e) => setCountryCode(e.target.value)}
-								className="input"
-								style={{ width: '140px', flexShrink: 0 }}
+					<p className="subtitle">
+						{mode === 'login' ? 'Sign in with your phone number' : 'Create a new account'}
+					</p>
+					
+					{/* Mode toggle */}
+					{step === 'phone' && (
+						<div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
+							<button
+								type="button"
+								onClick={() => setMode('login')}
+								className={`btn btn-secondary ${mode === 'login' ? 'active' : ''}`}
+								style={{ flex: 1, fontSize: '14px', padding: '10px' }}
 							>
-								{COUNTRIES.map(country => (
-									<option key={country.code} value={country.code}>
-										{country.flag} {country.code} ({country.dialCode})
-									</option>
-								))}
-							</select>
-							<input
-								id="phone"
-								type="tel"
-								placeholder="1234567890"
-								value={phoneNumber}
-								onChange={(e) => setPhoneNumber(e.target.value)}
-								className="input"
-								style={{ flex: 1 }}
-							/>
+								Login
+							</button>
+							<button
+								type="button"
+								onClick={() => setMode('register')}
+								className={`btn btn-secondary ${mode === 'register' ? 'active' : ''}`}
+								style={{ flex: 1, fontSize: '14px', padding: '10px' }}
+							>
+								Register
+							</button>
 						</div>
-						<button type="submit" className="btn">Send OTP</button>
-					</form>
-				) : (
-					<form onSubmit={verifyOtp} className="stack">
-						<label className="label" htmlFor="otp">Enter OTP</label>
-						<input
-							id="otp"
-							type="text"
-							inputMode="numeric"
-							placeholder="6-digit code"
-							value={otp}
-							onChange={(e) => setOtp(e.target.value)}
-							className="input"
-						/>
-						<button type="submit" className="btn">Verify</button>
-						<button type="button" onClick={() => setStep('phone')} className="btn btn-secondary">Back</button>
-					</form>
-				)}
+					)}
+
+					{/* Keep recaptcha-container always in DOM to prevent removal errors */}
+					<div id="recaptcha-container" style={{ display: 'none' }} />
+					
+					{step === 'phone' && mode === 'register' ? (
+						<form onSubmit={requestOtp} className="stack">
+							<label className="label" htmlFor="name">Full Name</label>
+							<input
+								id="name"
+								type="text"
+								placeholder="John Doe"
+								value={name}
+								onChange={(e) => setName(e.target.value)}
+								className="input"
+								required
+							/>
+							<label className="label" htmlFor="email">Email</label>
+							<input
+								id="email"
+								type="email"
+								placeholder="john@example.com"
+								value={email}
+								onChange={(e) => setEmail(e.target.value)}
+								className="input"
+								required
+							/>
+							<label className="label" htmlFor="address">Address</label>
+							<input
+								id="address"
+								type="text"
+								placeholder="Enter your address"
+								value={address}
+								onChange={(e) => setAddress(e.target.value)}
+								className="input"
+								required
+							/>
+							<label className="label" htmlFor="phone">Phone Number</label>
+							<div style={{ display: 'flex', gap: '8px' }}>
+								<select
+									id="country-code"
+									value={countryCode}
+									onChange={(e) => setCountryCode(e.target.value)}
+									className="input"
+									style={{ width: '140px', flexShrink: 0 }}
+								>
+									{COUNTRIES.map(country => (
+										<option key={country.code} value={country.code}>
+											{country.flag} {country.code} ({country.dialCode})
+										</option>
+									))}
+								</select>
+								<input
+									id="phone"
+									type="tel"
+									placeholder="1234567890"
+									value={phoneNumber}
+									onChange={(e) => setPhoneNumber(e.target.value)}
+									className="input"
+									style={{ flex: 1 }}
+									required
+								/>
+							</div>
+							<button type="submit" className="btn">Send OTP</button>
+						</form>
+					) : step === 'phone' ? (
+						<form onSubmit={requestOtp} className="stack">
+							<label className="label" htmlFor="phone">Phone Number</label>
+							<div style={{ display: 'flex', gap: '8px' }}>
+								<select
+									id="country-code"
+									value={countryCode}
+									onChange={(e) => setCountryCode(e.target.value)}
+									className="input"
+									style={{ width: '140px', flexShrink: 0 }}
+								>
+									{COUNTRIES.map(country => (
+										<option key={country.code} value={country.code}>
+											{country.flag} {country.code} ({country.dialCode})
+										</option>
+									))}
+								</select>
+								<input
+									id="phone"
+									type="tel"
+									placeholder="1234567890"
+									value={phoneNumber}
+									onChange={(e) => setPhoneNumber(e.target.value)}
+									className="input"
+									style={{ flex: 1 }}
+								/>
+							</div>
+							<button type="submit" className="btn">Send OTP</button>
+						</form>
+					) : step === 'otp' ? (
+						<form onSubmit={verifyOtp} className="stack">
+							<label className="label" htmlFor="otp">Enter OTP</label>
+							<input
+								id="otp"
+								type="text"
+								inputMode="numeric"
+								placeholder="6-digit code"
+								value={otp}
+								onChange={(e) => setOtp(e.target.value)}
+								className="input"
+							/>
+							{mode === 'register' && (
+								<p style={{ fontSize: '12px', color: 'var(--muted)', margin: '-8px 0 0 0' }}>
+									After verification, your registration will be completed.
+								</p>
+							)}
+							<button type="submit" className="btn">Verify</button>
+							<button type="button" onClick={() => { setStep('phone'); setOtp(''); }} className="btn btn-secondary">Back</button>
+						</form>
+					) : step === 'complete-registration' ? (
+						<form onSubmit={requestOtp} className="stack">
+							<p style={{ fontSize: '14px', color: 'var(--muted)', marginBottom: '12px' }}>
+								Your phone number has been verified. Please complete your registration:
+							</p>
+							<label className="label" htmlFor="name">Full Name</label>
+							<input
+								id="name"
+								type="text"
+								placeholder="John Doe"
+								value={name}
+								onChange={(e) => setName(e.target.value)}
+								className="input"
+								required
+							/>
+							<label className="label" htmlFor="email">Email</label>
+							<input
+								id="email"
+								type="email"
+								placeholder="john@example.com"
+								value={email}
+								onChange={(e) => setEmail(e.target.value)}
+								className="input"
+								required
+							/>
+							<label className="label" htmlFor="address">Address</label>
+							<input
+								id="address"
+								type="text"
+								placeholder="Enter your address"
+								value={address}
+								onChange={(e) => setAddress(e.target.value)}
+								className="input"
+								required
+							/>
+							<button type="submit" className="btn">Complete Registration</button>
+							<button type="button" onClick={() => { setStep('phone'); setMode('login'); setName(''); setEmail(''); setAddress(''); }} className="btn btn-secondary">Cancel</button>
+						</form>
+					) : null}
+				</div>
 			</div>
-		</div>
 		</>
 	);
 }
-
-

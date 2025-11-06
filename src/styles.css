@@ -103,6 +103,11 @@ select.input option {
 	border: 1px solid rgba(226,232,240,0.10);
 	box-shadow: none;
 }
+.btn-secondary.active {
+	background: rgba(34, 211, 238, 0.1);
+	border-color: var(--primary);
+	color: var(--primary);
+}
 .error { color: var(--danger); font-size: 14px; }
 
 .topbar {
