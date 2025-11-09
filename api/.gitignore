@@ -1,0 +1,46 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Virtual Environment
+venv/
+env/
+ENV/
+.venv
+
+# Flask
+instance/
+.webassets-cache
+*.db
+*.sqlite
+*.sqlite3
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Firebase Service Account Keys (SENSITIVE - DO NOT COMMIT)
+serviceAccountKey.json
+*serviceAccount*.json
+google-services.json
+GoogleService-Info.plist
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+Thumbs.db
+

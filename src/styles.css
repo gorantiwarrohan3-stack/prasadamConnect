@@ -103,6 +103,11 @@ select.input option {
 	border: 1px solid rgba(226,232,240,0.10);
 	box-shadow: none;
 }
+.btn-secondary.active {
+	background: rgba(34, 211, 238, 0.1);
+	border-color: var(--primary);
+	color: var(--primary);
+}
 .error { color: var(--danger); font-size: 14px; }
 
 .topbar {
@@ -110,6 +115,8 @@ select.input option {
 	padding: 0 16px; backdrop-filter: blur(8px);
 	background: linear-gradient(180deg, rgba(2,6,23,0.65), rgba(2,6,23,0));
 	border-bottom: 1px solid rgba(226,232,240,0.06);
+	justify-content: space-between;
+	z-index: 1000;
 }
 .brand {
 	width: 28px; height: 28px; border-radius: 8px;
@@ -117,6 +124,37 @@ select.input option {
 	box-shadow: 0 0 24px rgba(34,211,238,0.45);
 }
 .brand-name { font-weight: 700; letter-spacing: 0.3px; }
+
+/* Navigation Menu */
+.nav-menu {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+}
+
+.nav-menu-item {
+	appearance: none;
+	border: none;
+	background: transparent;
+	color: var(--text);
+	font-size: 14px;
+	font-weight: 600;
+	padding: 8px 16px;
+	border-radius: 8px;
+	cursor: pointer;
+	transition: background-color 120ms ease, color 120ms ease;
+}
+
+.nav-menu-item:hover {
+	background: rgba(226,232,240,0.08);
+}
+
+.nav-menu-item.active {
+	background: rgba(34, 211, 238, 0.1);
+	color: var(--primary);
+}
+
+/* Removed dropdown styles */
 
 .hello {
 	max-width: 680px;
@@ -126,6 +164,103 @@ select.input option {
 }
 .hello h1 { font-size: 40px; margin: 0 0 8px; }
 .hello p { color: var(--muted); margin: 0 0 18px; }
+
+/* Profile Section */
+.profile-section {
+	margin: 32px auto 0;
+	max-width: 500px;
+	text-align: left;
+}
+
+.profile-title {
+	font-size: 24px;
+	font-weight: 700;
+	margin: 0 0 20px;
+	color: var(--text);
+	text-align: center;
+}
+
+.profile-details {
+	background: radial-gradient(1200px 1200px at -10% -10%, rgba(34,211,238,0.05), transparent 45%), var(--card);
+	border: 1px solid rgba(226,232,240,0.06);
+	border-radius: 16px;
+	padding: 24px;
+	box-shadow: 0 10px 30px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.03);
+}
+
+.profile-item {
+	margin-bottom: 20px;
+}
+
+.profile-item:last-child {
+	margin-bottom: 0;
+}
+
+.profile-label {
+	font-size: 13px;
+	color: var(--muted);
+	margin-bottom: 6px;
+	font-weight: 500;
+	text-transform: uppercase;
+	letter-spacing: 0.5px;
+}
+
+.profile-value {
+	font-size: 16px;
+	color: var(--text);
+	word-break: break-word;
+	line-height: 1.5;
+}
+
+.profile-loading,
+.profile-error {
+	text-align: center;
+	padding: 20px;
+	color: var(--muted);
+	font-size: 14px;
+}
+
+.profile-error {
+	color: var(--danger);
+}
+
+.profile-success {
+	text-align: center;
+	padding: 12px;
+	color: var(--primary);
+	font-size: 14px;
+	background: rgba(34, 211, 238, 0.1);
+	border: 1px solid rgba(34, 211, 238, 0.3);
+	border-radius: 8px;
+}
+
+.profile-note {
+	font-size: 12px;
+	color: var(--muted);
+	margin-top: 4px;
+	font-style: italic;
+}
+
+.profile-actions {
+	display: flex;
+	gap: 12px;
+	margin-top: 24px;
+	justify-content: flex-end;
+}
+
+.profile-edit-form {
+	display: flex;
+	flex-direction: column;
+	gap: 0;
+}
+
+.profile-edit-form .profile-item {
+	margin-bottom: 16px;
+}
+
+.profile-edit-form .profile-item:last-of-type {
+	margin-bottom: 0;
+}
 
 /* Toast notification */
 .toast-container {
@@ -194,6 +329,68 @@ select.input option {
 	to {
 		opacity: 0;
 		transform: translateX(-50%) translateY(-10px);
+	}
+}
+
+/* Confirmation Modal */
+.modal-overlay {
+	position: fixed;
+	inset: 0;
+	background: rgba(0, 0, 0, 0.6);
+	backdrop-filter: blur(4px);
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	z-index: 10001;
+	animation: modalFadeIn 0.2s ease-out;
+}
+
+.modal-content {
+	background: radial-gradient(1200px 1200px at -10% -10%, rgba(34,211,238,0.05), transparent 45%), var(--card);
+	border: 1px solid rgba(226,232,240,0.06);
+	border-radius: 16px;
+	padding: 24px;
+	min-width: 320px;
+	max-width: 420px;
+	box-shadow: 0 10px 30px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.03);
+	animation: modalSlideIn 0.2s ease-out;
+}
+
+.modal-message {
+	font-size: 16px;
+	color: var(--text);
+	margin-bottom: 20px;
+	line-height: 1.5;
+}
+
+.modal-actions {
+	display: flex;
+	gap: 12px;
+	justify-content: flex-end;
+}
+
+.modal-actions .btn {
+	flex: 0 0 auto;
+	min-width: 100px;
+}
+
+@keyframes modalFadeIn {
+	from {
+		opacity: 0;
+	}
+	to {
+		opacity: 1;
+	}
+}
+
+@keyframes modalSlideIn {
+	from {
+		opacity: 0;
+		transform: translateY(-20px) scale(0.95);
+	}
+	to {
+		opacity: 1;
+		transform: translateY(0) scale(1);
 	}
 }
 
