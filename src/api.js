@@ -23,10 +23,26 @@ async function apiRequest(endpoint, options = {}) {
 
 	try {
 		const response = await fetch(url, config);
-		const data = await response.json();
+
+		// Try to parse JSON, but handle non-JSON responses gracefully
+		let data;
+		let bodyText;
+		try {
+			bodyText = await response.text();
+			data = bodyText ? JSON.parse(bodyText) : null;
+		} catch (parseError) {
+			// If JSON parsing fails, use the raw text as the body
+			data = null;
+		}
 
 		if (!response.ok) {
-			throw new Error(data.error || data.message || `HTTP error! status: ${response.status}`);
+			// Construct error message from parsed JSON or raw text
+			const errorMessage = data?.error || data?.message || bodyText || 'Unknown error';
+			const error = new Error(errorMessage);
+			error.status = response.status;
+			error.statusText = response.statusText;
+			error.body = bodyText;
+			throw error;
 		}
 
 		return data;
@@ -57,6 +73,17 @@ export async function registerUser(userData) {
 }
 
 /**
+ * Atomically create a new user and record their login history in a single transaction.
+ * This ensures both operations succeed or both fail together.
+ */
+export async function createUserWithLogin(userData) {
+	return apiRequest('/api/create-user-with-login', {
+		method: 'POST',
+		body: userData,
+	});
+}
+
+/**
  * Record login history
  */
 export async function recordLogin(uid, phoneNumber) {
@@ -70,7 +97,14 @@ export async function recordLogin(uid, phoneNumber) {
  * Get login history for a user
  */
 export async function getLoginHistory(uid, limit = 50) {
-	return apiRequest(`/api/login-history/${uid}?limit=${limit}`, {
+	// Validate and coerce limit to a safe integer
+	const safeLimit = Math.max(1, Math.min(Number.parseInt(limit, 10) || 50, 1000));
+	
+	// Construct URL with encoded path parameter and query string
+	const url = new URL(`/api/login-history/${encodeURIComponent(uid)}`, API_BASE_URL);
+	url.searchParams.set('limit', safeLimit.toString());
+	
+	return apiRequest(url.pathname + url.search, {
 		method: 'GET',
 	});
 }
@@ -79,8 +113,28 @@ export async function getLoginHistory(uid, limit = 50) {
  * Get user profile
  */
 export async function getUserProfile(uid) {
-	return apiRequest(`/api/user/${uid}`, {
+	return apiRequest(`/api/user/${encodeURIComponent(uid)}`, {
 		method: 'GET',
+	});
+}
+
+/**
+ * Update user profile
+ */
+export async function updateUserProfile(uid, userData) {
+	return apiRequest(`/api/user/${encodeURIComponent(uid)}`, {
+		method: 'PUT',
+		body: userData,
+	});
+}
+
+/**
+ * Unregister a user (rollback endpoint for cleanup)
+ */
+export async function unregisterUser(uid) {
+	return apiRequest('/api/unregister', {
+		method: 'POST',
+		body: { uid },
 	});
 }
 

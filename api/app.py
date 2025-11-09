@@ -626,6 +626,133 @@ def get_user(uid):
         }), 500
 
 
+@app.route('/api/user/<uid>', methods=['PUT'])
+def update_user(uid):
+    """
+    Update user profile by UID
+    Expected JSON body:
+    {
+        "name": "User Name" (optional),
+        "email": "user@example.com" (optional),
+        "address": "123 Main St, City, State" (optional)
+    }
+    Note: Phone number cannot be updated for security reasons
+    """
+    try:
+        if not uid:
+            return jsonify({
+                'success': False,
+                'error': 'UID is required'
+            }), 400
+        
+        data = request.get_json()
+        if not data:
+            return jsonify({
+                'success': False,
+                'error': 'Request body is required'
+            }), 400
+        
+        user_ref = db.collection('users').document(uid)
+        user_doc = user_ref.get()
+        
+        if not user_doc.exists:
+            return jsonify({
+                'success': False,
+                'error': 'User not found'
+            }), 404
+        
+        user_data = user_doc.to_dict()
+        update_data = {}
+        
+        # Update name if provided
+        if 'name' in data:
+            name = data['name'].strip()
+            if name:
+                update_data['name'] = name
+        
+        # Update email if provided
+        if 'email' in data:
+            email = data['email'].strip().lower()
+            if email:
+                # Validate email format
+                if not validate_email(email):
+                    return jsonify({
+                        'success': False,
+                        'error': 'Invalid email format'
+                    }), 400
+                
+                # Check if email is already taken by another user
+                if email != user_data.get('email'):
+                    normalized_email = normalize_email_for_path(email)
+                    email_marker_ref = db.collection('users_by_email').document(normalized_email)
+                    email_marker_doc = email_marker_ref.get()
+                    
+                    if email_marker_doc.exists:
+                        return jsonify({
+                            'success': False,
+                            'error': 'Email already registered'
+                        }), 409
+                    
+                    # Update email marker if email changed
+                    old_email = user_data.get('email')
+                    if old_email:
+                        old_normalized_email = normalize_email_for_path(old_email)
+                        old_email_marker_ref = db.collection('users_by_email').document(old_normalized_email)
+                        old_email_marker_ref.delete()
+                    
+                    # Create new email marker
+                    email_marker_data = {
+                        'uid': uid,
+                        'email': email,
+                        'createdAt': firestore.SERVER_TIMESTAMP,
+                    }
+                    email_marker_ref.set(email_marker_data)
+                
+                update_data['email'] = email
+        
+        # Update address if provided
+        if 'address' in data:
+            address = data['address'].strip()
+            if address:
+                update_data['address'] = address
+        
+        # If no valid updates, return error
+        if not update_data:
+            return jsonify({
+                'success': False,
+                'error': 'No valid fields to update'
+            }), 400
+        
+        # Add updated timestamp
+        update_data['updatedAt'] = firestore.SERVER_TIMESTAMP
+        
+        # Update user document
+        user_ref.update(update_data)
+        
+        # Get updated user data
+        updated_user_doc = user_ref.get()
+        updated_user_data = updated_user_doc.to_dict()
+        
+        # Remove sensitive fields before returning
+        sensitive_fields = ['password', 'token', 'ssn', 'socialSecurityNumber', 'apiKey', 'secretKey', 'accessToken', 'refreshToken']
+        for field in sensitive_fields:
+            updated_user_data.pop(field, None)
+        
+        return jsonify({
+            'success': True,
+            'message': 'User profile updated successfully',
+            'user': updated_user_data
+        }), 200
+        
+    except Exception as e:
+        print(f"Error in update_user: {str(e)}")
+        traceback.print_exc()
+        return jsonify({
+            'success': False,
+            'error': 'Internal server error'
+        }), 500
+
+
 @app.route('/api/unregister', methods=['POST'])
 def unregister_user():
     """

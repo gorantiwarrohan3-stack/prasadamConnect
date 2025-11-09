@@ -1,7 +1,7 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { auth, getOrCreateRecaptcha, clearRecaptcha } from './firebase.js';
-import { signInWithPhoneNumber } from 'firebase/auth';
-import { checkUserExists, registerUser, recordLogin } from './api.js';
+import { signInWithPhoneNumber, signOut } from 'firebase/auth';
+import { checkUserExists, registerUser, recordLogin, createUserWithLogin, unregisterUser } from './api.js';
 
 // Common countries with their phone codes
 const COUNTRIES = [
@@ -34,6 +34,7 @@ export default function Login() {
 	const [phoneNumber, setPhoneNumber] = useState('');
 	const [otp, setOtp] = useState('');
 	const [toast, setToast] = useState(null);
+	const [confirmationModal, setConfirmationModal] = useState(null); // { message, onConfirm, onCancel }
 	const confirmationRef = useRef(null);
 	
 	// Registration form state
@@ -53,6 +54,23 @@ export default function Login() {
 
 	function showToast(message, type = 'error') {
 		setToast({ message, type });
+	}
+
+	// Helper to normalize phone number to E.164 format
+	function normalizePhoneNumber(phoneNumber, countryCode) {
+		const selectedCountry = COUNTRIES.find(c => c.code === countryCode);
+		if (!selectedCountry) {
+			throw new Error('Invalid country code');
+		}
+		const normalizedDialCode = selectedCountry.dialCode.replace(/\D/g, '');
+		let phoneDigits = phoneNumber.replace(/\D/g, '');
+		
+		if (phoneDigits.startsWith(normalizedDialCode)) {
+			phoneDigits = phoneDigits.substring(normalizedDialCode.length);
+		}
+		
+		phoneDigits = phoneDigits.replace(/^0+/, '');
+		return '+' + normalizedDialCode + phoneDigits;
 	}
 
 	// Helper to initialize reCAPTCHA when container is available
@@ -138,14 +156,7 @@ export default function Login() {
 			// If user is already authenticated and in complete-registration step, skip OTP
 			if (step === 'complete-registration' && auth.currentUser) {
 				// User is already authenticated, complete registration directly
-				const selectedCountry = COUNTRIES.find(c => c.code === countryCode);
-				const normalizedDialCode = selectedCountry.dialCode.replace(/\D/g, '');
-				let phoneDigits = phoneNumber.replace(/\D/g, '');
-				if (phoneDigits.startsWith(normalizedDialCode)) {
-					phoneDigits = phoneDigits.substring(normalizedDialCode.length);
-				}
-				phoneDigits = phoneDigits.replace(/^0+/, '');
-				const fullPhone = '+' + normalizedDialCode + phoneDigits;
+				const fullPhone = normalizePhoneNumber(phoneNumber, countryCode);
 				await handleRegisterComplete(auth.currentUser.uid, fullPhone);
 				return;
 			}
@@ -173,28 +184,24 @@ export default function Login() {
 				return;
 			}
 
-			// Normalize dial code: remove '+' and any non-digits
-			const normalizedDialCode = selectedCountry.dialCode.replace(/\D/g, '');
-
-			// Sanitize phone input: remove all non-digits
-			let phoneDigits = phoneNumber.replace(/\D/g, '');
-
-			// Remove leading country code if user already entered it
-			if (phoneDigits.startsWith(normalizedDialCode)) {
-				phoneDigits = phoneDigits.substring(normalizedDialCode.length);
+			// Normalize phone number to E.164 format
+			let fullPhone;
+			try {
+				fullPhone = normalizePhoneNumber(phoneNumber, countryCode);
+			} catch (error) {
+				showToast('Please select a valid country', 'error');
+				return;
 			}
 
-			// Trim leading zeros if present (common in some countries)
-			phoneDigits = phoneDigits.replace(/^0+/, '');
-
+			// Extract phone digits for length validation (remove country code and +)
+			const normalizedDialCode = selectedCountry.dialCode.replace(/\D/g, '');
+			const phoneDigits = fullPhone.substring(1 + normalizedDialCode.length); // +1 for the '+' prefix
+			
 			// Validate phone number length after normalization
 			if (!phoneDigits || phoneDigits.length < 4 || phoneDigits.length > 15) {
 				showToast('Please enter a valid phone number', 'error');
 				return;
 			}
-
-			// Build full phone number with country code (prepend '+' and normalized dial code)
-			const fullPhone = '+' + normalizedDialCode + phoneDigits;
 
 			// Validate E.164 format
 			if (!/^\+\d{10,15}$/.test(fullPhone)) {
@@ -208,12 +215,22 @@ export default function Login() {
 				try {
 					const checkResult = await checkUserExists(fullPhone);
 					if (checkResult.exists) {
-						showToast('User already exists. Please login instead.', 'error');
-						setMode('login');
+						// Show confirmation modal instead of auto-switching
+						setConfirmationModal({
+							message: 'Account exists — go to Login?',
+							onConfirm: () => {
+								setMode('login');
+								setConfirmationModal(null);
+							},
+							onCancel: () => {
+								setConfirmationModal(null);
+							}
+						});
 						return;
 					}
 				} catch (apiError) {
 					// If API call fails, continue (API might be down)
+					// Log error but don't change UI flow
 					console.warn('Could not check user existence before OTP:', apiError);
 				}
 			} else if (mode === 'login') {
@@ -221,14 +238,23 @@ export default function Login() {
 				try {
 					const checkResult = await checkUserExists(fullPhone);
 					if (!checkResult.exists) {
-						showToast('User not found. Please register first.', 'error');
-						setMode('register');
-						// Clear OTP step and show registration form
-						setStep('phone');
+						// Show confirmation modal instead of auto-switching
+						setConfirmationModal({
+							message: 'No account found — go to Register?',
+							onConfirm: () => {
+								setMode('register');
+								setStep('phone');
+								setConfirmationModal(null);
+							},
+							onCancel: () => {
+								setConfirmationModal(null);
+							}
+						});
 						return;
 					}
 				} catch (apiError) {
 					// If API call fails, continue (API might be down)
+					// Log error but don't change UI flow
 					console.warn('Could not check user existence before OTP:', apiError);
 				}
 			}
@@ -264,21 +290,36 @@ export default function Login() {
 				return;
 			}
 
-			const selectedCountry = COUNTRIES.find(c => c.code === countryCode);
-			const normalizedDialCode = selectedCountry.dialCode.replace(/\D/g, '');
-			let phoneDigits = phoneNumber.replace(/\D/g, '');
-			if (phoneDigits.startsWith(normalizedDialCode)) {
-				phoneDigits = phoneDigits.substring(normalizedDialCode.length);
-			}
-			phoneDigits = phoneDigits.replace(/^0+/, '');
-			const fullPhone = '+' + normalizedDialCode + phoneDigits;
+			const fullPhone = normalizePhoneNumber(phoneNumber, countryCode);
 
 			if (mode === 'register') {
-				// Check if user already exists via API
+				// Check if user already exists via API (race condition check)
 				try {
 					const checkResult = await checkUserExists(fullPhone);
 					if (checkResult.exists) {
-						showToast('User already exists. Please login instead.', 'error');
+						// Race condition detected: user was created between initial check and OTP verification
+						// Sign out the authenticated user since registration cannot proceed
+						try {
+							await signOut(auth);
+						} catch (signOutError) {
+							console.warn('Error signing out after race condition:', signOutError);
+						}
+						
+						// Show confirmation modal explaining the situation
+						setConfirmationModal({
+							message: 'This phone number was registered by another user while you were verifying. Would you like to switch to Login?',
+							onConfirm: () => {
+								setMode('login');
+								setStep('phone');
+								setOtp('');
+								setConfirmationModal(null);
+							},
+							onCancel: () => {
+								setStep('phone');
+								setOtp('');
+								setConfirmationModal(null);
+							}
+						});
 						return;
 					}
 				} catch (apiError) {
@@ -306,14 +347,18 @@ export default function Login() {
 					await recordLogin(user.uid, fullPhone);
 					showToast('Authentication successful!', 'success');
 				} catch (apiError) {
-					// If API call fails, assume user exists and proceed with login
-					console.warn('Could not check user existence:', apiError);
+					// Fail fast: Don't allow login if user existence cannot be verified
+					console.error('Could not verify user existence:', apiError);
+					showToast('Unable to verify account. Please try again later.', 'error');
+					// Sign out the authenticated user since we cannot verify their account
 					try {
-						await recordLogin(user.uid, fullPhone);
-						showToast('Authentication successful!', 'success');
-					} catch (loginError) {
-						showToast('Login recorded, but could not verify user status.', 'error');
+						await signOut(auth);
+					} catch (signOutError) {
+						console.warn('Error signing out after verification failure:', signOutError);
 					}
+					// Reset to phone step
+					setStep('phone');
+					setOtp('');
 				}
 			}
 		} catch (err) {
@@ -324,13 +369,33 @@ export default function Login() {
 
 	async function handleRegisterComplete(uid, fullPhone) {
 		try {
-			// Check if user already exists before registering
+			// Check if user already exists before registering (final race condition check)
 			try {
 				const checkResult = await checkUserExists(fullPhone);
 				if (checkResult.exists) {
-					showToast('User already registered. Please login instead.', 'error');
-					setMode('login');
-					setStep('phone');
+					// Race condition detected: user was created between OTP verification and final registration
+					// Sign out the authenticated user since registration cannot proceed
+					try {
+						await signOut(auth);
+					} catch (signOutError) {
+						console.warn('Error signing out after race condition:', signOutError);
+					}
+					
+					// Show confirmation modal explaining the situation
+					setConfirmationModal({
+						message: 'This phone number was registered by another user. Would you like to switch to Login?',
+						onConfirm: () => {
+							setMode('login');
+							setStep('phone');
+							setOtp('');
+							setConfirmationModal(null);
+						},
+						onCancel: () => {
+							setStep('phone');
+							setOtp('');
+							setConfirmationModal(null);
+						}
+					});
 					return;
 				}
 			} catch (apiError) {
@@ -338,8 +403,9 @@ export default function Login() {
 				console.warn('Could not check user existence before registration:', apiError);
 			}
 
-			// Register user via API
-			await registerUser({
+			// Atomically register user and record login history via API
+			// This ensures both operations succeed or both fail together
+			await createUserWithLogin({
 				uid: uid,
 				name: name.trim(),
 				email: email.trim(),
@@ -347,16 +413,33 @@ export default function Login() {
 				address: address.trim(),
 			});
 
-			// Record login history via API
-			await recordLogin(uid, fullPhone);
-
 			showToast('Registration successful!', 'success');
 		} catch (err) {
-			// Handle specific error cases
+			// Handle specific error cases (e.g., API returned error that user already exists)
 			if (err.message && err.message.includes('already')) {
-				showToast('User already registered. Please login instead.', 'error');
-				setMode('login');
-				setStep('phone');
+				// Race condition detected via API error response
+				// Sign out the authenticated user since registration cannot proceed
+				try {
+					await signOut(auth);
+				} catch (signOutError) {
+					console.warn('Error signing out after registration error:', signOutError);
+				}
+				
+				// Show confirmation modal explaining the situation
+				setConfirmationModal({
+					message: 'This phone number was registered by another user. Would you like to switch to Login?',
+					onConfirm: () => {
+						setMode('login');
+						setStep('phone');
+						setOtp('');
+						setConfirmationModal(null);
+					},
+					onCancel: () => {
+						setStep('phone');
+						setOtp('');
+						setConfirmationModal(null);
+					}
+				});
 			} else {
 				showToast(err?.message || 'Registration failed', 'error');
 			}
@@ -382,6 +465,29 @@ export default function Login() {
 							)}
 						</div>
 						<div className="toast-message">{toast.message}</div>
+					</div>
+				</div>
+			)}
+			{confirmationModal && (
+				<div className="modal-overlay" onClick={confirmationModal.onCancel}>
+					<div className="modal-content" onClick={(e) => e.stopPropagation()}>
+						<div className="modal-message">{confirmationModal.message}</div>
+						<div className="modal-actions">
+							<button
+								type="button"
+								className="btn btn-secondary"
+								onClick={confirmationModal.onCancel}
+							>
+								Cancel
+							</button>
+							<button
+								type="button"
+								className="btn"
+								onClick={confirmationModal.onConfirm}
+							>
+								Confirm
+							</button>
+						</div>
 					</div>
 				</div>
 			)}
